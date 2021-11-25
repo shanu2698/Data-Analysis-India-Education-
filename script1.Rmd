@@ -1,0 +1,454 @@
+---
+title: "Education_India"
+author: "Shanu Thakur 20070243037"
+date: "3 May 2021"
+output:
+  html_notebook:
+    df_print: paged
+    fig_width: 10
+    fig_height: 9
+  html_document:
+    df_print: paged
+---
+
+<section id="top">
+
+**INTRODUCTION**
+
+The Education is a key ingredient for the growth of any sector. The process of learning and the process of learning how we shall learn is continuous in nature. With the help of right teachers they can drive the mass youth population towards a better generation of ideologist, entrepreneurs, growth, and livelihood. Post script education is like a dough in pizza, if you want your pizza to be tasty and complete you necessarily need education in today's world. And in order to see that If we're going in a right direction, I'll have to go through the data what I can possibly get and interpret optimum valuable information. So I went on and selected the the domain of Education to study the situation we poses and chose my area of interest as to be the whole nation.
+
+**OBJECTIVE**
+
+To study and know about the adequate availability of teachers , schools, classrooms with respect to the population and thereby also analyze literacy proportion.
+
+-   <a href="#Histogram"> To study the Literacy proportion with respect to the Quality of Schools we have.</a>
+-   <a href="#Scatterplot"> To study the Literacy rate against total population using a scatterplot for better interpretation.</a>
+-   <a href="#Bar"> To study the statewise total number of schools and rank them in terms of number.</a>
+-   <a href="#Double-Bar"> To study the total number of teachers and statewise ranking in terms of State Size using stacked bar graph.</a>
+-   <a href="#Leaflet"> To study some analysis using interactive maps using Leaflet package.</a>
+
+</section>
+
+Let's Load some libraries and get started
+
+```{r echo=TRUE, warning=FALSE, attr.source='.numberLines'}
+#setwd("/home/Documents/Symbiosis_Linux/rassign1/R-Mini_project_1")
+library(tidyverse)
+library(rgdal)
+library(raster)
+library(sf)
+library(ggplot2)
+library(ggalt)
+library(dplyr)
+library(tmap)
+library(leaflet)
+library(tmaptools)
+library(sp)
+library(htmltools)
+library(leaflet.extras)
+library(viridis)
+```
+
+```{r echo=TRUE}
+full_data<- read.csv("India_Education_Cleaned.csv")
+head(full_data)
+```
+
+**Cleaning Data**
+
+Removing the unnnecessary data attributes:
+
+```{r echo=TRUE}
+#Data Wrangling
+sortedData = subset(full_data, select = -c(globalid,Boys.Only.School,Girls.Only.School,Elementary.Enrolment.by.School.Category,Good.Condition.Classrooms) )
+```
+
+Consolidating Senior Teachers and Junior Teachers.
+
+```{r echo=TRUE}
+sortedData<-mutate(sortedData,SeniorTeachers=Age.55.56.of.Teachers+Age.57.58.of.Teachers+Age.59.60.of.Teachers)
+sortedData = subset(sortedData,select = -c(Age.55.56.of.Teachers,Age.57.58.of.Teachers,Age.59.60.of.Teachers))
+sortedData<-mutate(sortedData,JuniorTeachers=Total.Teachers-SeniorTeachers)
+```
+
+Calculating the exact number of washrooms facilitated for both boys and girls in a School
+
+```{r echo=TRUE}
+sortedData<-mutate(sortedData, Washrooms.For.Both=(Girls.Toilet.Facilitated.Schools+ Boys.Toilet.Facilitated.Schools)-Total.No.Of.Schools)
+```
+
+Numerising Data from nULL/ NA
+
+```{r echo=TRUE, warning=FALSE}
+sortedData$District.Code<- as.numeric(sortedData$District.Code) #converting non numeric into numeric and NA in district code
+sortedData[is.na(sortedData)]=0#replacing NULL values with 0
+```
+
+Consolidating attribiutes that can reflect Qualities of Schools
+
+```{r echo=TRUE}
+GoodAttr<-dplyr::select(sortedData,Total.No.Of.Schools,Schools.Approachable.By.Road.in.All.Weather,Washrooms.For.Both,Playground.Facilitated.Schools,Boundarywall.Facilitated.Schools,Drinking.Water.Facilitated.Schools,Electricity.Facilitated.Schools, Computer.Facilitated.Schools,Mid.Day.Meal.Facilitated.Schools,Total.Teachers)
+head(GoodAttr)
+```
+
+Giving a score to the schools on the basis of quality
+
+```{r echo=TRUE}
+Percentage<-transmute(GoodAttr,PercentageValues=(GoodAttr/Total.No.Of.Schools)*100)
+write.csv(Percentage, file = "Percentage.csv")
+```
+
+writing it to CSV since the data was not accessible even though it was showing
+
+```{r echo=TRUE}
+PercentageCSV<-read.csv("Percentage.csv")
+```
+
+Rearranging columns
+
+```{r echo=TRUE}
+
+# selecting only numeric columns for Summation
+PercentageCSV<- PercentageCSV[,2:11]
+head(PercentageCSV)
+```
+
+Finally alotting them the Scores
+
+```{r echo=TRUE}
+PercentageCSV<-mutate(PercentageCSV, cbind(PercentageCSV,SumAll=rowSums(PercentageCSV)))
+Score <- transmute(PercentageCSV,AverageScore=(SumAll)/10) # dividing the sum by 10 number of coulmns For Average
+sortedData$SchoolScore<-Score
+head(sortedData)
+```
+
+categorizing from Excellent to Ultra Poor MAx
+
+```{r echo=TRUE}
+sortedData$SchoolQuality[sortedData$SchoolScore <=100 ]="Ultra Poor MAX"
+sortedData$SchoolQuality[sortedData$SchoolScore >100 ]="Poor"
+sortedData$SchoolQuality[sortedData$SchoolScore >200 ]="Moderate"
+sortedData$SchoolQuality[sortedData$SchoolScore >300 ]="Good"
+sortedData$SchoolQuality[sortedData$SchoolScore >400 ]="Very Good"
+sortedData$SchoolQuality[sortedData$SchoolScore >500 ]="Excellent"
+sortedData$SchoolScore[is.na(sortedData$SchoolScore)]=0#replacing NULL values with 0
+```
+
+Creating an attribute Division and Countrty
+
+```{r echo=TRUE}
+sortedData<-mutate(sortedData,Country="India")
+sortedData<-mutate(sortedData,Division="NULL")
+head(sortedData)
+```
+
+Temporary data frames to make another data set i.e Ranks(you will find that after few steps)
+
+```{r echo=TRUE}
+#Creating a temporary data frame containing statenames and states containing total number of teachers 
+TotalTeacher<-data.frame(Statenames=factor(), TotalTeachers=factor())
+temp<- dplyr::select(sortedData, Statenames, Total.Teachers)
+temp$Statenames<-as.factor(temp$Statenames) # converting into factors so we can  get levels
+head(temp)
+```
+
+Using a for Looop to calculate the Total number of teachers for a state since data given was for a district
+
+```{r echo=TRUE}
+levelOfState<- levels(temp$Statenames)
+for (StateNam in levelOfState) {
+    StateNamm<- filter(temp, Statenames==StateNam)
+    total=sum(StateNamm$Total.Teachers)
+    nRow <- data.frame(Statenames=StateNam, TotalTeachers=total)
+    TotalTeacher<- rbind(TotalTeacher,nRow)
+    }
+```
+
+Creating a new DataFrame Ranks
+
+```{r echo=TRUE}
+Ranks<- sortedData %>% count(Statenames)
+names(Ranks)[2]<-"TotalDistricts"
+Ranks$objectid<- 1:nrow(Ranks)# creating unique IDs for merging propose
+Ranks<-Ranks[,c(3,1,2)] # Rearranging columns
+TotalTeacher$objectid<- 1:nrow(TotalTeacher)# creating unique IDs for merging propose
+TotalTeacher<-TotalTeacher[,c(3,1,2)] # Rearranging columns
+```
+
+Merging Ranks and TotalTeacher data frames by unique IDs
+
+```{r echo=TRUE}
+Ranks<- Ranks<-merge(Ranks,TotalTeacher, by="objectid")
+```
+
+Giving ranks to the State size and States having total number of teachers
+
+```{r echo=TRUE}
+Ranks$Rank.StateSize  <- rank(-Ranks$TotalDistricts, ties.method = "max")
+Ranks$Rank.NoOfTeacher<- rank(-Ranks$TotalTeachers)
+head(Ranks)
+```
+
+Rearranging columns in a better useful order
+
+```{r echo=TRUE}
+sortedData<-sortedData[,c(1,46,47,2,4,3,seq(5,37),41,42,43,44,45,39,40)]
+```
+
+categorizing states for the Division
+
+```{r echo=TRUE}
+NorthIndia<-     filter(sortedData, Statenames=="NCT of Delhi" | Statenames=="Haryana" | Statenames=="Punjab" | Statenames=="Chandigarh" | Statenames=="Rajasthan" | Statenames=="Uttar Pradesh" | Statenames=="Ladakh" | Statenames=="Jammu & Kashmir" | Statenames=="Himachal Pradesh" | Statenames=="Uttarakhand")
+NorthEastIndia<- filter(sortedData, Statenames=="Assam" | Statenames=="Meghalaya" | Statenames=="Tripura" | Statenames=="Nagaland" | Statenames=="Mizoram" | Statenames=="Manipur" | Statenames=="Arunachal Pradesh" | Statenames=="Sikkim")
+CentralIndia<-   filter(sortedData, Statenames=="Madhya Pradesh" | Statenames=="Chhatisgarh")
+EastIndia<-      filter(sortedData, Statenames=="Goa" | Statenames=="Maharashtra" | Statenames=="Dadra & Nagar Haveli" | Statenames=="Gujarat" | Statenames=="Daman & Diu")
+WestIndia<-      filter(sortedData, Statenames=="Bihar" | Statenames=="Orissa" | Statenames=="West Bengal" | Statenames=="Jharkhand")
+SouthIndia<-     filter(sortedData, Statenames=="Kerala" | Statenames=="Tamil Nadu" | Statenames=="Telangana" | Statenames=="Karnataka" | Statenames=="Pondicherry" | Statenames=="Lakshadweep" | Statenames=="Andhra Pradesh" | Statenames=="Andaman & Nicobar Islands")
+```
+
+Consolidating Divisions
+
+```{r echo=TRUE}
+NorthIndia<-     mutate(NorthIndia,Division="North")
+NorthEastIndia<- mutate(NorthEastIndia,Division="NorthEast")
+CentralIndia<-   mutate(CentralIndia,Division="Central")
+EastIndia<-      mutate(EastIndia,Division="East")
+WestIndia<-      mutate(WestIndia,Division="West")
+SouthIndia<-     mutate(SouthIndia,Division="South")
+```
+
+Arranging data into ascending order if objectId
+
+```{r echo=TRUE}
+sortedData<- rbind(NorthIndia,NorthEastIndia,CentralIndia,EastIndia,WestIndia,SouthIndia)
+sortedData<- arrange(sortedData,objectid)
+#View(sortedData)
+```
+
+Loading Shape File
+
+```{r echo=TRUE}
+mapData<-readOGR("shapefiles/India_Education.shp") #loading the map Data from shape file
+mapData<-mapData[1:693,1:1] #removing redundant data from the shape file
+#View(mapData)
+```
+
+Merging shape file withe data frame
+
+```{r echo=TRUE}
+mergedSHP_CSV<- merge(mapData,sortedData, by.x="objectid", by.y="objectid") # merging sorted cleaned data with the shape file via objectid layer
+#View(mergedSHP_CSV)
+```
+
+**Plotting India Full map**
+
+```{r echo=TRUE, fig.height=16, fig.width=26,fig.align="center", warning=FALSE}
+# Administration Plots 
+tm_shape(mergedSHP_CSV) + tm_fill("#FFDE70") + tm_layout(title="INDIA", legend.show = FALSE, title.size = 4.5)+
+                          tm_compass(type = "8star",size = 15, position = c("right", "top"))  #plotting India Full map
+```
+
+**Plotting Divisions**
+
+```{r echo=TRUE, fig.height=16, fig.width=26,fig.align="center", warning=FALSE}
+
+tm_shape(mergedSHP_CSV) + tm_fill("Division") + tm_layout(title="INDIA", legend.show = FALSE, title.size = 4.5)+
+                          tm_compass(type = "8star",size = 15, position = c("right", "top"))  #plotting India Full map
+```
+
+**PLotting Indian States**
+
+```{r echo=TRUE,  fig.height=16, fig.width=26, fig.align="center", warning=FALSE}
+tm_shape(mergedSHP_CSV) + tm_fill("Statenames") + tm_layout(title="INDIA-States",legend.outside = TRUE, legend.text.size = 2 ,title.size = 4.5)+ tm_compass(type = "8star",size = 15, position = c("right", "top"))+ tmap_options(max.categories = 38)#plotting States in India
+```
+
+**PLotting India all Districts**
+
+```{r echo=TRUE, fig.height=16, fig.width=26,fig.align="center", warning=FALSE}
+tm_shape(mergedSHP_CSV) + tm_fill("District.Name")+ tm_layout(title="INDIA-District", title.position= c("right","top"),legend.show = FALSE, title.size = 4.5)+
+tm_compass(type = "8star", position = c("right", "top"), size=15) +tmap_options(max.categories = 686) #plotting Districts in India
+```
+
+**Creating Facets showing total teachers, total classrooms, total schools and total literacy proportion**
+
+```{r echo=TRUE,  fig.height=30, fig.width=30,fig.align="center",warning=FALSE}
+# Facets - pseudofacets of given attributes
+Total.Teachers  <- tm_shape(mergedSHP_CSV) +tm_fill("Total.Teachers") +tm_borders(alpha=.2) + tm_style("col_blind") + tm_layout(legend.show = TRUE, legend.text.size = 1.5,legend.title.size = 5)
+Total.classrooms<- tm_shape(mergedSHP_CSV) +tm_fill("Total.number.of.Classrooms",title = "Total No. of Classrooms" )+tm_borders(alpha=.2)+ tm_style("col_blind")+ tm_layout(legend.show = TRUE, legend.text.size = 1.5,legend.title.size = 6)
+Total.Schools   <- tm_shape(mergedSHP_CSV) +tm_fill("Total.No.Of.Schools", title = "Total No. of Schools") +tm_borders(alpha=.2) + tm_style("col_blind")+ tm_layout(legend.show = TRUE, legend.text.size = 1.5,legend.title.size = 6)
+Total.Literacy  <- tm_shape(mergedSHP_CSV) +tm_fill("Total.Literacy.Proportion", title = "Total Literacy Proportion") +tm_borders(alpha=.2)+ tm_style("col_blind")+ tm_layout(legend.show = TRUE, legend.text.size = 1.5,legend.title.size = 6)
+tmap_arrange(Total.Teachers,Total.classrooms,Total.Schools,Total.Literacy, ncol = 2)
+```
+
+<section id="Histogram">
+
+**Histogram plot**
+
+```{r echo=TRUE, fig.width=8}
+# Histogram on a Continuous (Numeric) Variable
+theme_set(theme_classic())
+g <- ggplot(sortedData, aes( x=Major.Repair.Needed.Total.Classrooms)) + scale_fill_brewer(palette = "Spectral")
+g + geom_histogram(aes(fill=SchoolQuality), 
+                   binwidth = 400, 
+                   col="black", 
+                   size=.1) +  # change binwidth
+  labs(title="Histogram with Auto Binning", 
+       subtitle="Literacy Proportion across School Quality")  
+```
+
+</section>
+
+<a href="#top"> TO THE TOP</a>
+
+<section id="Scatterplot">
+
+**Scatterplot**
+
+```{r echo=TRUE, fig.width=15, warning=FALSE}
+#scatterplot literacy vs population
+options(scipen = 999) # turn-off scientific notation like 1e+48
+sortedDataSelect <- sortedData[sortedData$Total.Population > 3500000 & 
+                                 sortedData$Total.Population <= 5000000 & 
+                           sortedData$Total.Literacy.Proportion> 0.1 & 
+                             sortedData$Total.Literacy.Proportion< 100,]
+
+ggplot(sortedData, aes(x=Total.Population, y=Total.Literacy.Proportion)) + 
+  geom_point(aes(colour=Statenames, size=Total.Population)) +   # draw points
+  geom_smooth(method="loess", se=F) + # draw smoothing line
+  ylim(c(0, 100)) + 
+  xlim(c(0, 5000000)) +   
+  geom_encircle(aes(x=Total.Population, y=Total.Literacy.Proportion), 
+                data=sortedDataSelect, 
+                color="red", 
+                size=2, 
+                expand=0.08) +   # encircle
+  labs(subtitle="Literacy Vs Population", 
+       x="Population", 
+       y="Literacy", 
+       title="Scatterplot + Encircle", 
+       caption="India")
+```
+
+
+
+
+**ScatterPLots using Divisions**
+
+```{r echo=TRUE, fig.width=15, warning=FALSE}
+#scatterplot literacy vs population
+options(scipen = 999) # turn-off scientific notation like 1e+48
+sortedDataSelect <- sortedData[sortedData$Total.Population > 3500000 & 
+                                 sortedData$Total.Population <= 5000000 & 
+                           sortedData$Total.Literacy.Proportion> 0.1 & 
+                             sortedData$Total.Literacy.Proportion< 100,]
+
+ggplot(sortedData, aes(x=Total.Population, y=Total.Literacy.Proportion)) + 
+  geom_point(aes(colour=Division, size=Total.Population)) +   # draw points
+  geom_smooth(method="loess", se=F) + # draw smoothing line
+  ylim(c(0, 100)) + 
+  xlim(c(0, 5000000)) +   
+  geom_encircle(aes(x=Total.Population, y=Total.Literacy.Proportion), 
+                data=sortedDataSelect, 
+                color="red", 
+                size=2, 
+                expand=0.08) +   # encircle
+  labs(subtitle="Literacy Vs Population", 
+       x="Population", 
+       y="Literacy", 
+       title="Scatterplot + Encircle", 
+       caption="India")
+```
+</section>
+
+<a href="#top"> TO THE TOP</a>
+
+<section id="Bar">
+
+**Bar graph PLots**
+
+```{r echo=TRUE, fig.height=8, fig.width=12}
+# Draw Bar plot showing Attributes Total Schools vs States
+theme_set(theme_bw())
+ggplot(sortedData, aes(x=Statenames, y=Total.No.Of.Schools)) + 
+  geom_bar(stat="identity", width=.5, fill="tomato3") + 
+  labs(title="Ordered Bar Chart", 
+       subtitle="Total Schools Vs States ", 
+       caption="India") + 
+  theme(axis.text.x = element_text(angle=90, vjust=0.6))
+```
+
+</section>
+
+<a href="#top"> TO THE TOP</a>
+
+manipulated data into Rank2 so as to plot the double bar grapgh (restructured from vertical to horizontal kind of)
+
+```{r echo=TRUE}
+
+head(Ranks)
+#Wranggling data to make able to plot double bar graphs from single data frame
+Rank2<- data.frame(Attributes=rep(c("Ranks of State Size","Ranks of No of Teachers"),each=nrow(Ranks)),
+                                  Statenames=rep(c(Ranks$Statenames.x),2),
+                   Rank=c(Ranks$Rank.StateSize,Ranks$Rank.NoOfTeacher))
+head(Rank2)
+```
+
+<section id="Double-Bar">
+
+**Double BAr graph plot**
+
+```{r echo=TRUE, fig.height=8, fig.width=15}
+# plotting double bar grapgh
+ggplot(data=Rank2, aes(x=Statenames, y=Rank, fill=Attributes)) +
+  geom_bar(stat="identity", position=position_dodge())+
+  theme(axis.text.x = element_text(angle=90, vjust=0.6)) + 
+  labs(x = 'State Name', y='Ranking ',title = 'Comparing the Ranks: State Size vs Total No Of Teachers')
+```
+
+</section>
+
+<a href="#top"> TO THE TOP</a>
+
+<section id="Leaflet">
+
+**Interactive Maps**
+
+leaflet denoting states and districts
+
+```{r echo=TRUE, fig.align="center", fig.height=6, fig.width=8, warning=FALSE}
+
+#interactive Leaflet plots 
+mergedSHP_CSV <- mergedSHP_CSV %>% 
+  sf::st_as_sf(coords = c("Latitude", "Longitude"),crs = WGS84)
+
+palPwr <- leaflet::colorFactor(palette = viridis(37),domain = mergedSHP_CSV$Statenames)
+
+leaflet(data = mergedSHP_CSV) %>%
+  addTiles() %>%
+  setView(lng =80,lat=26,zoom=4)%>%
+  addPolygons(data = mergedSHP_CSV,
+              fillColor = ~palPwr(mergedSHP_CSV$Statenames),
+              stroke = TRUE, 
+              fillOpacity = 0.7, 
+              smoothFactor = 0.5,
+              color = "grey", 
+              weight = 1,
+              opacity =0.5,
+              popup =paste("<b>","<i>",mergedSHP_CSV$District.Name,"</b>",",",mergedSHP_CSV$Statenames,"</i>", "<br>",
+                           "<b>","Total Schools: ","</b>",mergedSHP_CSV$Total.No.Of.Schools,"<br>",
+                           "<b>","Highly Qualified Teachers: " ,"</b>",mergedSHP_CSV$Total.Teachers,"/",mergedSHP_CSV$Post.Graduation.Qualified.Teachers+mergedSHP_CSV$Post.Doctrate.Qualified.Teachers,"<br>",
+                           "<b>","Total Classrooms: ","</b>",mergedSHP_CSV$Single.Classroom.Schools,"<br>"
+                           ),
+                    
+              fill = "Statenames",
+              highlight = highlightOptions(weight = 5,
+                                           color = "white",
+                                           fillOpacity = 0.7,
+                                           bringToFront = FALSE),
+              label = mergedSHP_CSV$Statenames)
+
+```
+
+</section>
+
+<a href="#top"> TO THE TOP</a>
